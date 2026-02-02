@@ -35,32 +35,33 @@ def get_lat_lon(city):
 
 def calculate_chart(date, time, lat, lon):
     """Calculate Vedic Planetary Positions using Swiss Ephemeris."""
-    # Convert to UTC for calculation
-    local_dt = datetime.datetime.combine(date, time)
-    # Assuming input is roughly in local time - for high precision we usually need timezone
-    # For this simplified app, we will assume standard offsets or pass raw time to AI for fine tuning
-    # But to get positions:
-    
+    # Convert to Julian Day
+    # Note: We are treating input time as standard time for simplicity. 
+    # For professional precision, timezone conversion is recommended.
     jd = swe.julday(date.year, date.month, date.day, time.hour + time.minute/60.0)
-    swe.set_sid_mode(swe.SIDM_LAHIRI) # Set to Vedic (Lahiri)
+    
+    # Set Sidereal Mode (Lahiri Ayanamsa)
+    swe.set_sid_mode(swe.SIDM_LAHIRI)
     
     planets = {
         "Sun": swe.SUN, "Moon": swe.MOON, "Mars": swe.MARS,
         "Mercury": swe.MERCURY, "Jupiter": swe.JUPITER, 
         "Venus": swe.VENUS, "Saturn": swe.SATURN, 
-        "Rahu": swe.MEAN_NODE # Mean Node = Rahu
+        "Rahu": swe.MEAN_NODE
     }
     
     chart_data = []
     
-    # Calculate Ascendant (Lagna)
-    cusps, ascmc = swe.houses_ex(jd, lat, lon, b'A', flag=swe.FLG_SIDEREAL)
+    # Calculate Ascendant (Lagna) - FIXED LINE
+    # We pass the sidereal flag positionally, not as a keyword
+    cusps, ascmc = swe.houses_ex(jd, lat, lon, b'A', swe.FLG_SIDEREAL)
     asc_deg = ascmc[0]
     chart_data.append({"Planet": "Lagna (Asc)", "Degree": f"{asc_deg:.2f}", "Zodiac": get_zodiac_name(asc_deg)})
 
     for p_name, p_id in planets.items():
-        res = swe.calc_ut(jd, p_id, flag=swe.FLG_SWIEPH | swe.FLG_SIDEREAL)
-        deg = res[0][0]
+        # FIXED LINE: Removed 'flag=' keyword
+        res = swe.calc_ut(jd, p_id, swe.FLG_SWIEPH | swe.FLG_SIDEREAL)
+        deg = res[0]
         chart_data.append({
             "Planet": p_name,
             "Degree": f"{deg:.2f}",
@@ -79,6 +80,9 @@ def calculate_chart(date, time, lat, lon):
     return chart_data
 
 def get_zodiac_name(lon):
+    """Convert longitude to Zodiac Sign."""
+    # Normalize to 0-360
+    lon = lon % 360
     signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", 
              "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
     return signs[int(lon / 30)]
@@ -122,33 +126,42 @@ if st.sidebar.button("Generate Report"):
                         genai.configure(api_key=api_key)
                         model = genai.GenerativeModel("gemini-1.5-flash")
                         
-                        response = model.generate_content(
-                            base_prompt + 
-                            "\n\nTask: Explain the Lagna (Ascendant) personality. Identify the Moon Sign. List the 'Yogas' (Good/Bad) formed by these positions. Give a general life prediction."
-                        )
-                        st.markdown(response.text)
+                        try:
+                            response = model.generate_content(
+                                base_prompt + 
+                                "\n\nTask: Explain the Lagna (Ascendant) personality. Identify the Moon Sign. List the 'Yogas' (Good/Bad) formed by these positions. Give a general life prediction."
+                            )
+                            st.markdown(response.text)
+                        except Exception as e:
+                            st.error(f"AI Error: {e}")
 
                 # TAB 3: REMEDIES
                 with tab3:
                     with st.spinner("Finding Remedies..."):
-                        response_rem = model.generate_content(
-                            base_prompt + 
-                            "\n\nTask: Suggest specific Gemstones (include metal and finger). Suggest Vastu tips for their home. Suggest a mantra."
-                        )
-                        st.markdown(response_rem.text)
+                        try:
+                            response_rem = model.generate_content(
+                                base_prompt + 
+                                "\n\nTask: Suggest specific Gemstones (include metal and finger). Suggest Vastu tips for their home. Suggest a mantra."
+                            )
+                            st.markdown(response_rem.text)
+                        except:
+                            st.error("Could not fetch remedies.")
                         
                 # TAB 4: WEALTH & CRYPTO
                 with tab4:
                     with st.spinner("Analyzing Financial Charts..."):
-                        response_fin = model.generate_content(
-                            base_prompt + 
-                            "\n\nTask: Focus ONLY on Wealth, Speculation, and Career. "
-                            "1. Analyze the 2nd (Wealth), 5th (Speculation), and 11th (Gains) houses. "
-                            "2. Is this person suitable for High Risk Crypto Trading? (Check Rahu/Mercury). "
-                            "3. Give a 'Luck Score' for Stock Market vs Real Estate. "
-                            "4. Suggest lucky colors for trading."
-                        )
-                        st.markdown(response_fin.text)
+                        try:
+                            response_fin = model.generate_content(
+                                base_prompt + 
+                                "\n\nTask: Focus ONLY on Wealth, Speculation, and Career. "
+                                "1. Analyze the 2nd (Wealth), 5th (Speculation), and 11th (Gains) houses. "
+                                "2. Is this person suitable for High Risk Crypto Trading? (Check Rahu/Mercury). "
+                                "3. Give a 'Luck Score' for Stock Market vs Real Estate. "
+                                "4. Suggest lucky colors for trading."
+                            )
+                            st.markdown(response_fin.text)
+                        except:
+                            st.error("Could not fetch financial data.")
 
             else:
                 st.error("Could not find that city. Please try a major nearby city.")
