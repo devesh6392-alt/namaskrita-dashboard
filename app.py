@@ -35,10 +35,7 @@ def get_lat_lon(city):
 
 def calculate_chart(date, time, lat, lon):
     """Calculate Vedic Planetary Positions with Safety Checks."""
-    # Convert to Julian Day
     jd = swe.julday(date.year, date.month, date.day, time.hour + time.minute/60.0)
-    
-    # Set Sidereal Mode (Lahiri Ayanamsa)
     swe.set_sid_mode(swe.SIDM_LAHIRI)
     
     planets = {
@@ -51,7 +48,6 @@ def calculate_chart(date, time, lat, lon):
     chart_data = []
     
     # Calculate Ascendant (Lagna)
-    # Note: houses_ex usually returns (cusps, ascmc). ascmc[0] is Ascendant.
     cusps, ascmc = swe.houses_ex(jd, lat, lon, b'A', swe.FLG_SIDEREAL)
     asc_deg = ascmc[0]
     chart_data.append({"Planet": "Lagna (Asc)", "Degree": f"{asc_deg:.2f}", "Zodiac": get_zodiac_name(asc_deg)})
@@ -59,15 +55,14 @@ def calculate_chart(date, time, lat, lon):
     for p_name, p_id in planets.items():
         res = swe.calc_ut(jd, p_id, swe.FLG_SWIEPH | swe.FLG_SIDEREAL)
         
-        # --- SAFEGUARD: Handle different library return types ---
-        # Some versions return (long, lat, dist...)
-        # Others return ((long, lat, dist...), return_flag)
-        if isinstance(res[0], tuple):
-            deg = res[0][0] # Extract longitude from nested tuple
-        elif isinstance(res, tuple):
-            deg = res[0]    # Extract longitude from flat tuple
+        # SAFEGUARD: Handle different library return types
+        if isinstance(res, tuple):
+            if isinstance(res[0], tuple):
+                deg = res[0][0]
+            else:
+                deg = res[0]
         else:
-            deg = float(res) # Fallback
+            deg = float(res)
             
         chart_data.append({
             "Planet": p_name,
@@ -75,8 +70,7 @@ def calculate_chart(date, time, lat, lon):
             "Zodiac": get_zodiac_name(deg)
         })
         
-    # Ketu is exactly opposite Rahu
-    # We find Rahu in our list to calculate Ketu
+    # Ketu
     rahu_data = next(item for item in chart_data if item["Planet"] == "Rahu")
     rahu_deg = float(rahu_data['Degree'])
     ketu_deg = (rahu_deg + 180) % 360
@@ -95,6 +89,14 @@ def get_zodiac_name(lon):
     signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", 
              "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
     return signs[int(lon / 30)]
+
+def get_ai_response(model_name, prompt):
+    """Try to get response, fallback if model not found."""
+    model = genai.GenerativeModel(model_name)
+    try:
+        return model.generate_content(prompt)
+    except Exception as e:
+        return None
 
 # --- MAIN APP LOGIC ---
 
@@ -119,7 +121,7 @@ if st.sidebar.button("Generate Report"):
                         st.dataframe(chart_data)
                         st.success(f"Coordinates Used: Lat {lat}, Lon {lon}")
 
-                    # PREPARE PROMPT FOR AI
+                    # PREPARE PROMPT
                     chart_text = "\n".join([f"{item['Planet']} is in {item['Zodiac']} at {item['Degree']} degrees." for item in chart_data])
                     
                     base_prompt = f"""
@@ -129,43 +131,44 @@ if st.sidebar.button("Generate Report"):
                     
                     Please provide a detailed analysis in strictly formatted markdown sections.
                     """
+                    
+                    genai.configure(api_key=api_key)
 
                     # TAB 2: GENERAL PREDICTIONS
                     with tab2:
                         with st.spinner("Consulting the Stars..."):
-                            genai.configure(api_key=api_key)
-                            model = genai.GenerativeModel("gemini-1.5-flash")
+                            # Try the newest model, fallback to standard if it fails
+                            response = get_ai_response("gemini-1.5-flash", base_prompt + "\n\nTask: Explain the Lagna personality, Moon Sign, and Yogas.")
+                            if not response:
+                                response = get_ai_response("gemini-pro", base_prompt + "\n\nTask: Explain the Lagna personality, Moon Sign, and Yogas.")
                             
-                            response = model.generate_content(
-                                base_prompt + 
-                                "\n\nTask: Explain the Lagna (Ascendant) personality. Identify the Moon Sign. List the 'Yogas' (Good/Bad) formed by these positions. Give a general life prediction."
-                            )
-                            st.markdown(response.text)
+                            if response:
+                                st.markdown(response.text)
+                            else:
+                                st.error("AI connection failed. Check API Key.")
 
                     # TAB 3: REMEDIES
                     with tab3:
                         with st.spinner("Finding Remedies..."):
-                            response_rem = model.generate_content(
-                                base_prompt + 
-                                "\n\nTask: Suggest specific Gemstones (include metal and finger). Suggest Vastu tips for their home. Suggest a mantra."
-                            )
-                            st.markdown(response_rem.text)
+                            response_rem = get_ai_response("gemini-1.5-flash", base_prompt + "\n\nTask: Suggest Gemstones, Vastu tips, and Mantras.")
+                            if not response_rem:
+                                response_rem = get_ai_response("gemini-pro", base_prompt + "\n\nTask: Suggest Gemstones, Vastu tips, and Mantras.")
                             
-                    # TAB 4: WEALTH & CRYPTO
+                            if response_rem:
+                                st.markdown(response_rem.text)
+
+                    # TAB 4: WEALTH
                     with tab4:
                         with st.spinner("Analyzing Financial Charts..."):
-                            response_fin = model.generate_content(
-                                base_prompt + 
-                                "\n\nTask: Focus ONLY on Wealth, Speculation, and Career. "
-                                "1. Analyze the 2nd (Wealth), 5th (Speculation), and 11th (Gains) houses. "
-                                "2. Is this person suitable for High Risk Crypto Trading? (Check Rahu/Mercury). "
-                                "3. Give a 'Luck Score' for Stock Market vs Real Estate. "
-                                "4. Suggest lucky colors for trading."
-                            )
-                            st.markdown(response_fin.text)
+                            response_fin = get_ai_response("gemini-1.5-flash", base_prompt + "\n\nTask: Analyze 2nd/5th/11th houses, Crypto suitability, and Stock Market luck.")
+                            if not response_fin:
+                                response_fin = get_ai_response("gemini-pro", base_prompt + "\n\nTask: Analyze 2nd/5th/11th houses, Crypto suitability, and Stock Market luck.")
+                            
+                            if response_fin:
+                                st.markdown(response_fin.text)
 
                 except Exception as e:
-                    st.error(f"An error occurred during calculation: {e}")
+                    st.error(f"An error occurred: {e}")
             else:
                 st.error("Could not find that city. Please try a major nearby city.")
 
